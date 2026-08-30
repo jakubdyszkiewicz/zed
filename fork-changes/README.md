@@ -14,6 +14,13 @@ All changes implement **per-file git diff features**:
 2. **Show Diff** — right-click a file → `git: show file diff` → opens the
    `SoloDiffView` (same as Git Panel "File Diff" click behavior) showing the
    whole file diffed against HEAD.
+3. **Git Graph branch filtering** — merged from upstream PR #57266 (branch
+   `pr-57266` / tip `2c27164c97`, "show only current branch" toggle, branch
+   chips, `+` add-branch picker). Merge required small fixes: unified `ui::`
+   import list, restored a closing brace after `deploy_header_context_menu`,
+   and added the now-required `PickerDelegate::name()` (`"branch-add"`) for
+   `BranchAddPickerDelegate`. The PR was never merged upstream; if it lands,
+   prefer dropping our copy.
 
 Upstream references: `git: compare with branch` (repo-wide) landed via PR
 #57886; File History menu item pattern from PR #42441.
