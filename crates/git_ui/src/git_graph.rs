@@ -265,6 +265,10 @@ struct BranchAddPickerDelegate {
 impl PickerDelegate for BranchAddPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "branch-add"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Add branch to view…".into()
     }
@@ -2846,8 +2850,9 @@ impl GitGraph {
             }
             context_menu
         });
-
         self.set_context_menu(context_menu, position, None, window, cx);
+    }
+
     fn head_branch_name(&self, cx: &App) -> Option<SharedString> {
         self.get_repository(cx).and_then(|repo| {
             repo.read(cx)
