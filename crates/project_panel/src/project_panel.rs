@@ -589,6 +589,96 @@ pub fn init(cx: &mut App) {
                 cx.stop_propagation();
             })
         });
+        // Forwards `git::ShowFileDiff` to the opener installed by `git_ui`,
+        // following the same pattern as `git::FileHistory` above.
+        workspace.register_action_renderer(|div, workspace, window, cx| {
+            let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                return div;
+            };
+            if !panel.read(cx).focus_handle(cx).contains_focused(window, cx) {
+                return div;
+            }
+            if panel.read(cx).selected_entry_project_path(cx).is_none() {
+                return div;
+            }
+            let workspace = workspace.weak_handle();
+            div.capture_action(move |_: &git::ShowFileDiff, window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                            return;
+                        };
+                        let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
+                        else {
+                            return;
+                        };
+                        git_ui_core::open_show_file_diff(workspace, &project_path, window, cx);
+                    })
+                    .log_err();
+                cx.stop_propagation();
+            })
+        });
+
+        // `git::CompareFileWithBranch` invoked from the command palette or a
+        // keybinding: uses the project panel's selection when it is focused,
+        // otherwise the active editor's file at the cursor.
+        workspace.register_action(|workspace, _: &git::CompareFileWithBranch, window, cx| {
+            let panel = workspace.panel::<ProjectPanel>(cx);
+            let project_path = panel
+                .as_ref()
+                .filter(|panel| panel.read(cx).focus_handle(cx).contains_focused(window, cx))
+                .and_then(|panel| panel.read(cx).selected_entry_project_path(cx))
+                .or_else(|| {
+                    let editor = workspace.active_item_as::<Editor>(cx)?;
+                    editor.update(cx, |editor, cx| {
+                        let head = editor.selections.newest_anchor().head();
+                        let file = editor.file_at(head, cx)?;
+                        Some(project::ProjectPath {
+                            worktree_id: file.worktree_id(cx),
+                            path: file.path().clone(),
+                        })
+                    })
+                });
+            let Some(project_path) = project_path else {
+                return;
+            };
+            git_ui_core::open_compare_file_with_branch(workspace, &project_path, window, cx);
+        });
+
+        // Forwards `git::CompareFileWithBranch` to the opener installed by
+        // `git_ui`, following the same pattern as `git::FileHistory` above.
+        workspace.register_action_renderer(|div, workspace, window, cx| {
+            let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                return div;
+            };
+            if !panel.read(cx).focus_handle(cx).contains_focused(window, cx) {
+                return div;
+            }
+            if panel.read(cx).selected_entry_project_path(cx).is_none() {
+                return div;
+            }
+            let workspace = workspace.weak_handle();
+            div.capture_action(move |_: &git::CompareFileWithBranch, window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                            return;
+                        };
+                        let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
+                        else {
+                            return;
+                        };
+                        git_ui_core::open_compare_file_with_branch(
+                            workspace,
+                            &project_path,
+                            window,
+                            cx,
+                        );
+                    })
+                    .log_err();
+                cx.stop_propagation();
+            })
+        });
     })
     .detach();
 }
@@ -1215,6 +1305,13 @@ impl ProjectPanel {
                                     )
                                     .when(has_history, |menu| {
                                         menu.action("View History", Box::new(git::FileHistory))
+                                    })
+                                    .when(!is_dir, |menu| {
+                                        menu.action("Show Diff", Box::new(git::ShowFileDiff))
+                                            .action(
+                                                "Compare with Branch…",
+                                                Box::new(git::CompareFileWithBranch),
+                                            )
                                     })
                                     .when(!is_dir, |menu| {
                                         menu.action(

@@ -10296,7 +10296,7 @@ impl Repository {
         })
     }
 
-    fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
+    pub fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
         let repository_id = self.snapshot.id;
         let rx = self.send_job("load_blob_content", None, move |state, _| async move {
             match state {

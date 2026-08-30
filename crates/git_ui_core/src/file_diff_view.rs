@@ -11,7 +11,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
     IntoElement, Render, Task, WeakEntity, Window,
 };
-use language::{Buffer, HighlightedText, Point};
+use language::{Buffer, HighlightedText, LineEnding, Point};
 use project::{Project, ProjectPath};
 use settings::Settings;
 use std::{
@@ -33,6 +33,9 @@ pub struct FileDiffView {
     editor: Entity<SplittableEditor>,
     old_buffer: Entity<Buffer>,
     new_buffer: Entity<Buffer>,
+    /// When set, overrides the left-hand side's label in the tab title, e.g.
+    /// for a base branch that has no on-disk buffer.
+    base_label: Option<SharedString>,
     buffer_changes_tx: watch::Sender<()>,
     _recalculate_diff_task: Task<Result<()>>,
 }
@@ -95,6 +98,59 @@ impl FileDiffView {
                         editor.go_to_singleton_buffer_point(point, window, cx);
                     });
                 }
+
+                diff_view
+            })
+        })
+    }
+
+    /// Like [`Self::open`], but the old (left-hand) side is an in-memory
+    /// buffer holding `base_text` instead of an on-disk file. Used to diff a
+    /// worktree file against, e.g., a branch's version of the file.
+    pub fn open_with_base_text(
+        base_text: String,
+        base_label: SharedString,
+        project_path: ProjectPath,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        window.spawn(cx, async move |cx| {
+            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
+            let new_buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await?;
+            let language: Option<Arc<language::Language>> = new_buffer
+                .read_with(cx, |buffer, _| buffer.language().map(Arc::clone));
+            let old_buffer = cx.new(|cx| {
+                let mut buffer = Buffer::local_normalized(base_text.into(), LineEnding::Unix, cx);
+                buffer.set_language(language, cx);
+                buffer
+            });
+
+            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let workspace_entity = cx.entity();
+                let diff_view = cx.new(|cx| {
+                    FileDiffView::new(
+                        old_buffer,
+                        new_buffer,
+                        buffer_diff,
+                        project.clone(),
+                        workspace_entity,
+                        window,
+                        cx,
+                    )
+                });
+                diff_view.update(cx, |diff_view, _| {
+                    diff_view.base_label = Some(base_label);
+                });
+
+                let pane = workspace.active_pane();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(diff_view.clone()), true, true, None, window, cx);
+                });
 
                 diff_view
             })
@@ -166,6 +222,7 @@ impl FileDiffView {
             buffer_changes_tx,
             old_buffer,
             new_buffer,
+            base_label: None,
             _recalculate_diff_task: cx.spawn(async move |this, cx| {
                 while buffer_changes_rx.recv().await.is_ok() {
                     loop {
@@ -265,10 +322,13 @@ impl Item for FileDiffView {
                 })
                 .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.into())
         };
-        let old_filename = title_text(&self.old_buffer);
+        let old_label = self
+            .base_label
+            .clone()
+            .unwrap_or_else(|| title_text(&self.old_buffer).into());
         let new_filename = title_text(&self.new_buffer);
 
-        format!("{old_filename} ↔ {new_filename}").into()
+        format!("{old_label} ↔ {new_filename}").into()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<ui::SharedString> {
@@ -561,6 +621,66 @@ mod tests {
                 )
             );
         })
+    }
+
+    #[gpui::test]
+    async fn test_diff_view_with_base_text(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/test"),
+            serde_json::json!({
+                "file.txt": "line 1\nline 2 changed\nline 3\n"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.visible_worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let project_path = project::ProjectPath {
+            worktree_id,
+            path: util::rel_path::rel_path("file.txt").into_arc(),
+        };
+
+        let diff_view = workspace
+            .update_in(cx, |workspace, window, cx| {
+                FileDiffView::open_with_base_text(
+                    "line 1\nline 2\nline 3\n".to_string(),
+                    "main".into(),
+                    project_path,
+                    workspace.weak_handle(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_state_with_diff(
+            &diff_view.read_with(cx, |diff_view, cx| {
+                diff_view.editor.read(cx).rhs_editor().clone()
+            }),
+            cx,
+            &unindent(
+                "
+                  ˇline 1
+                - line 2
+                + line 2 changed
+                  line 3
+                ",
+            ),
+        );
+
+        diff_view.read_with(cx, |diff_view, cx| {
+            assert_eq!(diff_view.tab_content_text(0, cx), "main ↔ file.txt");
+        });
     }
 
     #[gpui::test]

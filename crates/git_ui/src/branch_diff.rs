@@ -135,6 +135,94 @@ impl BranchDiff {
             .detach_and_notify_err(workspace_weak, window, cx);
     }
 
+    /// Opens a branch picker and, once a branch is selected, shows a
+    /// [`FileDiffView`] of the file at `project_path` against that branch.
+    pub(crate) fn compare_file_with_branch(
+        workspace: &mut Workspace,
+        project_path: &ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        let Some((repository, repo_path)) = project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(project_path, cx)
+        else {
+            let workspace_handle = cx.entity().downgrade();
+            window
+                .spawn(cx, async |_cx| {
+                    let result: Result<()> = Err(anyhow!("No repository for selected file"));
+                    result
+                })
+                .detach_and_notify_err(workspace_handle, window, cx);
+            return;
+        };
+        let workspace_handle = workspace.weak_handle();
+        let project_path = project_path.clone();
+        let on_select = Arc::new({
+            let repository = repository.clone();
+            let workspace_handle = workspace_handle.clone();
+            move |branch: git::repository::Branch, window: &mut Window, cx: &mut App| {
+                let base_ref: SharedString = branch.name().to_owned().into();
+                let repository = repository.clone();
+                let project_path = project_path.clone();
+                let repo_path = repo_path.clone();
+                let workspace = workspace_handle.clone();
+                let error_handle = workspace_handle.clone();
+                window
+                    .spawn(cx, async move |cx| {
+                        let tree_diff = repository
+                            .update(cx, |repo, cx| {
+                                repo.diff_tree(
+                                    git::status::DiffTreeType::MergeBase {
+                                        base: base_ref.clone(),
+                                        head: "HEAD".into(),
+                                    },
+                                    cx,
+                                )
+                            })
+                            .await??;
+                        let base_text_task = match tree_diff.entries.get(&repo_path) {
+                            Some(git::status::TreeDiffStatus::Modified { old, .. }
+                            | git::status::TreeDiffStatus::Deleted { old }) => Some(
+                                repository
+                                    .update(cx, |repo, cx| repo.load_blob_content(old.clone(), cx))
+                                    .await?,
+                            ),
+                            _ => None,
+                        };
+                        let base_text = base_text_task.unwrap_or_default();
+                        workspace.update_in(cx, |workspace, window, cx| {
+                            git_ui_core::file_diff_view::FileDiffView::open_with_base_text(
+                                base_text,
+                                base_ref,
+                                project_path,
+                                workspace.weak_handle(),
+                                window,
+                                cx,
+                            )
+                            .detach_and_notify_err(error_handle, window, cx);
+                        })?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_notify_err(workspace_handle.clone(), window, cx);
+            }
+        });
+
+        workspace.toggle_modal(window, cx, |window, cx| {
+            branch_picker::select_modal(
+                workspace_handle,
+                Some(repository),
+                None,
+                on_select,
+                window,
+                cx,
+            )
+        });
+    }
+
     fn compare_with_branch(
         workspace: &mut Workspace,
         _: &CompareWithBranch,

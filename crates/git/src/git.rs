@@ -61,6 +61,10 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Shows the diff of the selected file against HEAD.
+        ShowFileDiff,
+        /// Compares the selected file against a chosen branch.
+        CompareFileWithBranch,
         /// Opens a permalink for the selected file on its Git hosting provider.
         OpenFilePermalink,
         /// Copies a permalink for the selected file on its Git hosting provider.

@@ -114,3 +114,65 @@ pub fn open_file_history(
     };
     opener(workspace, path, window, cx);
 }
+
+type CompareFileWithBranchOpener =
+    dyn Fn(&mut Workspace, &ProjectPath, &mut Window, &mut Context<Workspace>);
+
+struct CompareFileWithBranchOpenerGlobal(Rc<CompareFileWithBranchOpener>);
+
+impl Global for CompareFileWithBranchOpenerGlobal {}
+
+pub fn set_compare_file_with_branch_opener(
+    opener: impl Fn(&mut Workspace, &ProjectPath, &mut Window, &mut Context<Workspace>) + 'static,
+    cx: &mut App,
+) {
+    cx.set_global(CompareFileWithBranchOpenerGlobal(Rc::new(opener)));
+}
+
+/// Opens a picker to compare the file at `path` against a branch, if an opener
+/// was installed via [`set_compare_file_with_branch_opener`].
+pub fn open_compare_file_with_branch(
+    workspace: &mut Workspace,
+    path: &ProjectPath,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(opener) = cx
+        .try_global::<CompareFileWithBranchOpenerGlobal>()
+        .map(|opener| opener.0.clone())
+    else {
+        return;
+    };
+    opener(workspace, path, window, cx);
+}
+
+type ShowFileDiffOpener =
+    dyn Fn(&mut Workspace, &ProjectPath, &mut Window, &mut Context<Workspace>);
+
+struct ShowFileDiffOpenerGlobal(Rc<ShowFileDiffOpener>);
+
+impl Global for ShowFileDiffOpenerGlobal {}
+
+pub fn set_show_file_diff_opener(
+    opener: impl Fn(&mut Workspace, &ProjectPath, &mut Window, &mut Context<Workspace>) + 'static,
+    cx: &mut App,
+) {
+    cx.set_global(ShowFileDiffOpenerGlobal(Rc::new(opener)));
+}
+
+/// Opens the diff view for the file at `path` against HEAD, if an opener was
+/// installed via [`set_show_file_diff_opener`].
+pub fn open_show_file_diff(
+    workspace: &mut Workspace,
+    path: &ProjectPath,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(opener) = cx
+        .try_global::<ShowFileDiffOpenerGlobal>()
+        .map(|opener| opener.0.clone())
+    else {
+        return;
+    };
+    opener(workspace, path, window, cx);
+}

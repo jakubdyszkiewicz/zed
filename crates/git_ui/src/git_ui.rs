@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
+use util::maybe;
 
 use workspace::{Toast, notifications::NotificationId};
 
@@ -95,6 +96,61 @@ pub fn init(cx: &mut App) {
             git_graph::open_or_reuse_graph(
                 workspace, repo_id, git_store, log_source, None, window, cx,
             );
+        },
+        cx,
+    );
+
+    git_ui_core::set_compare_file_with_branch_opener(
+        |workspace, project_path, window, cx| {
+            branch_diff::BranchDiff::compare_file_with_branch(workspace, project_path, window, cx);
+        },
+        cx,
+    );
+
+    git_ui_core::set_show_file_diff_opener(
+        |workspace, project_path, window, cx| {
+            let workspace_handle = workspace.weak_handle();
+            let project_path = project_path.clone();
+            window
+                .spawn(cx, async move |cx| {
+                    cx.update(|window, cx| {
+                        maybe!({
+                            // Resolve the entry in a scope, so no workspace /
+                            // git store leases are held when `open_or_focus`
+                            // reads the workspace.
+                            let (repository, repo_path, status) = {
+                                let workspace = workspace_handle.upgrade()?;
+                                let project = workspace.read(cx).project().clone();
+                                let git_store = project.read(cx).git_store().clone();
+                                let (repository, repo_path) = git_store
+                                    .read(cx)
+                                    .repository_and_path_for_project_path(
+                                        &project_path, cx,
+                                    )?;
+                                let status =
+                                    repository.read(cx).status_for_path(&repo_path)?.status;
+                                (repository, repo_path, status)
+                            };
+                            let entry = git_panel::GitStatusEntry {
+                                repo_path,
+                                status,
+                                staging: git::status::StageStatus::Unstaged,
+                                diff_stat: None,
+                            };
+                            solo_diff_view::SoloDiffView::open_or_focus(
+                                entry,
+                                repository,
+                                workspace_handle.clone(),
+                                window,
+                                cx,
+                            )
+                            .detach_and_notify_err(workspace_handle, window, cx);
+                            Some(())
+                        });
+                    })
+                    .ok();
+                })
+                .detach();
         },
         cx,
     );
