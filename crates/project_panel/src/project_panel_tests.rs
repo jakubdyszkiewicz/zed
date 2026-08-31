@@ -12048,9 +12048,9 @@ async fn test_type_ahead_selects_visible_entries(cx: &mut gpui::TestAppContext) 
     expire_type_ahead(&panel, cx);
     cx.simulate_keystrokes("a");
     assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
-    cx.simulate_keystrokes("down");
+    cx.dispatch_action(TypeAheadNextMatch::default());
     assert_eq!(selected_path(&panel, cx).as_deref(), Some("a"));
-    cx.simulate_keystrokes("up");
+    cx.dispatch_action(TypeAheadPreviousMatch::default());
     assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
 
     // Backspace removes the last query character (the selection stays put,
@@ -12060,7 +12060,7 @@ async fn test_type_ahead_selects_visible_entries(cx: &mut gpui::TestAppContext) 
     cx.simulate_keystrokes("b");
     assert_eq!(selected_path(&panel, cx).as_deref(), Some("b"));
     panel.update(cx, |panel, _| assert!(panel.type_ahead.is_some()));
-    cx.simulate_keystrokes("backspace");
+    cx.dispatch_action(TypeAheadBackspace::default());
     assert_eq!(selected_path(&panel, cx).as_deref(), Some("b"));
     panel.update(cx, |panel, _| assert!(panel.type_ahead.is_none()));
 }

@@ -1059,6 +1059,17 @@
     },
   },
   {
+    "context": "ProjectPanel && type_ahead",
+    "use_key_equivalents": true,
+    "bindings": {
+      "backspace": "project_panel::TypeAheadBackspace",
+      "delete": "project_panel::TypeAheadBackspace",
+      "up": "project_panel::TypeAheadPreviousMatch",
+      "down": "project_panel::TypeAheadNextMatch",
+      "escape": "project_panel::TypeAheadCancel",
+    },
+  },
+  {
     "context": "VariableList",
     "use_key_equivalents": true,
     "bindings": {

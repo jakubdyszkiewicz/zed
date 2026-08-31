@@ -426,6 +426,14 @@ actions!(
         ToggleHideHidden,
         /// Starts a new search in the selected directory.
         NewSearchInDirectory,
+        /// Removes the last character of the active type-ahead query.
+        TypeAheadBackspace,
+        /// Selects the previous entry matching the active type-ahead query.
+        TypeAheadPreviousMatch,
+        /// Selects the next entry matching the active type-ahead query.
+        TypeAheadNextMatch,
+        /// Cancels the active type-ahead query.
+        TypeAheadCancel,
         /// Unfolds the selected directory.
         UnfoldDirectory,
         /// Folds the selected directory.
@@ -7063,64 +7071,6 @@ impl ProjectPanel {
 
         let keystroke = &event.keystroke;
         let key = keystroke.key.as_str();
-        if key == "escape" {
-            if self.type_ahead.take().is_some() {
-                cx.notify();
-            }
-            return;
-        }
-        if key == "backspace" || key == "delete" {
-            let Some(type_ahead) = self.type_ahead.as_mut() else {
-                return;
-            };
-            if type_ahead.at.elapsed() >= TYPE_AHEAD_RESET_INTERVAL {
-                self.type_ahead = None;
-                cx.notify();
-                cx.stop_propagation();
-                return;
-            }
-            type_ahead.query.pop();
-            type_ahead.at = Instant::now();
-            let query = type_ahead.query.clone();
-            if query.is_empty() {
-                self.type_ahead = None;
-            } else {
-                let query = query.to_lowercase();
-                if let Some(found) = self.find_visible_entry(
-                    self.selection.as_ref(),
-                    false,
-                    &|entry, _| {
-                        type_ahead_match_indices(
-                            entry.entry.path.file_name().unwrap_or_default(),
-                            &query,
-                        )
-                        .is_some()
-                    },
-                    cx,
-                ) {
-                    self.selection = Some(found);
-                    self.autoscroll(cx);
-                }
-            }
-            cx.notify();
-            cx.stop_propagation();
-            return;
-        }
-        if key == "up" || key == "down" {
-            let Some(query) = self.active_type_ahead().map(str::to_string) else {
-                return;
-            };
-            let Some(found) =
-                self.find_matching_visible_entry(&query, self.selection, key == "up", cx)
-            else {
-                return;
-            };
-            self.selection = Some(found);
-            self.autoscroll(cx);
-            cx.notify();
-            cx.stop_propagation();
-            return;
-        }
         if key.len() != 1
             || keystroke.modifiers.control
             || keystroke.modifiers.alt
@@ -7160,11 +7110,96 @@ impl ProjectPanel {
         }
     }
 
+    fn type_ahead_backspace(
+        &mut self,
+        _: &TypeAheadBackspace,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(type_ahead) = self.type_ahead.as_mut() else {
+            return;
+        };
+        if type_ahead.at.elapsed() >= TYPE_AHEAD_RESET_INTERVAL {
+            self.type_ahead = None;
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        type_ahead.query.pop();
+        type_ahead.at = Instant::now();
+        let query = type_ahead.query.clone();
+        if query.is_empty() {
+            self.type_ahead = None;
+        } else {
+            let query = query.to_lowercase();
+            if let Some(found) = self.find_visible_entry(
+                self.selection.as_ref(),
+                false,
+                &|entry, _| {
+                    type_ahead_match_indices(
+                        entry.entry.path.file_name().unwrap_or_default(),
+                        &query,
+                    )
+                    .is_some()
+                },
+                cx,
+            ) {
+                self.selection = Some(found);
+                self.autoscroll(cx);
+            }
+        }
+        cx.notify();
+        cx.stop_propagation();
+    }
+
+    fn type_ahead_previous_match(
+        &mut self,
+        _: &TypeAheadPreviousMatch,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_type_ahead_match(true, cx);
+    }
+
+    fn type_ahead_next_match(
+        &mut self,
+        _: &TypeAheadNextMatch,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_type_ahead_match(false, cx);
+    }
+
+    fn type_ahead_cancel(
+        &mut self,
+        _: &TypeAheadCancel,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.type_ahead.take().is_some() {
+            cx.notify();
+        }
+        cx.stop_propagation();
+    }
+
+    fn cycle_type_ahead_match(&mut self, reverse: bool, cx: &mut Context<Self>) {
+        let Some(query) = self.active_type_ahead().map(str::to_string) else {
+            return;
+        };
+        let Some(found) = self.find_matching_visible_entry(&query, self.selection, reverse, cx)
+        else {
+            return;
+        };
+        self.selection = Some(found);
+        self.autoscroll(cx);
+        cx.notify();
+        cx.stop_propagation();
+    }
+
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
-
         let identifier = if self.filename_editor.focus_handle(cx).is_focused(window) {
             "editing"
         } else {
@@ -7172,6 +7207,9 @@ impl ProjectPanel {
         };
 
         dispatch_context.add(identifier);
+        if self.active_type_ahead().is_some() {
+            dispatch_context.add("type_ahead");
+        }
         dispatch_context
     }
 
@@ -7567,6 +7605,10 @@ impl Render for ProjectPanel {
                 ))
                 .key_context(self.dispatch_context(window, cx))
                 .on_key_down(cx.listener(Self::handle_type_ahead_key))
+                .on_action(cx.listener(Self::type_ahead_backspace))
+                .on_action(cx.listener(Self::type_ahead_previous_match))
+                .on_action(cx.listener(Self::type_ahead_next_match))
+                .on_action(cx.listener(Self::type_ahead_cancel))
                 .on_action(cx.listener(Self::scroll_up))
                 .on_action(cx.listener(Self::scroll_down))
                 .on_action(cx.listener(Self::scroll_cursor_center))
