@@ -6988,6 +6988,66 @@ impl ProjectPanel {
         )
     }
 
+    /// Finds the next (or, with `reverse`, previous) visible entry that
+    /// fuzzily matches `query`, wrapping around the whole visible list. The
+    /// current selection is skipped, so repeated calls cycle through matches.
+    fn find_matching_visible_entry(
+        &self,
+        query: &str,
+        start: Option<SelectedEntry>,
+        reverse: bool,
+        cx: &Context<Self>,
+    ) -> Option<SelectedEntry> {
+        let entries: Vec<(WorktreeId, ProjectEntryId, &str)> = self
+            .state
+            .visible_entries
+            .iter()
+            .flat_map(|worktree| {
+                worktree.entries.iter().filter_map(move |entry| {
+                    let file_name = entry.entry.path.file_name()?;
+                    Some((worktree.worktree_id, entry.id, file_name))
+                })
+            })
+            .collect();
+        if entries.is_empty() {
+            return None;
+        }
+
+        let start_ix = start.and_then(|start| {
+            entries.iter().position(|(worktree_id, entry_id, _)| {
+                *worktree_id == start.worktree_id && *entry_id == start.entry_id
+            })
+        });
+
+        let count = entries.len();
+        let mut steps = 0;
+        let mut ix = match (start_ix, reverse) {
+            (Some(ix), _) => ix,
+            (None, false) => count - 1,
+            (None, true) => 0,
+        };
+        while steps < count {
+            ix = if reverse {
+                (ix + count - 1) % count
+            } else {
+                (ix + 1) % count
+            };
+            steps += 1;
+            let (worktree_id, entry_id, file_name) = entries[ix];
+            if type_ahead_match_indices(file_name, query).is_some()
+                && !start.as_ref().is_some_and(|start| {
+                    start.worktree_id == worktree_id && start.entry_id == entry_id
+                })
+            {
+                return Some(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                });
+            }
+        }
+        None
+    }
+
     fn handle_type_ahead_key(
         &mut self,
         event: &KeyDownEvent,
@@ -7007,6 +7067,58 @@ impl ProjectPanel {
             if self.type_ahead.take().is_some() {
                 cx.notify();
             }
+            return;
+        }
+        if key == "backspace" || key == "delete" {
+            let Some(type_ahead) = self.type_ahead.as_mut() else {
+                return;
+            };
+            if type_ahead.at.elapsed() >= TYPE_AHEAD_RESET_INTERVAL {
+                self.type_ahead = None;
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+            type_ahead.query.pop();
+            type_ahead.at = Instant::now();
+            let query = type_ahead.query.clone();
+            if query.is_empty() {
+                self.type_ahead = None;
+            } else {
+                let query = query.to_lowercase();
+                if let Some(found) = self.find_visible_entry(
+                    self.selection.as_ref(),
+                    false,
+                    &|entry, _| {
+                        type_ahead_match_indices(
+                            entry.entry.path.file_name().unwrap_or_default(),
+                            &query,
+                        )
+                        .is_some()
+                    },
+                    cx,
+                ) {
+                    self.selection = Some(found);
+                    self.autoscroll(cx);
+                }
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if key == "up" || key == "down" {
+            let Some(query) = self.active_type_ahead().map(str::to_string) else {
+                return;
+            };
+            let Some(found) =
+                self.find_matching_visible_entry(&query, self.selection, key == "up", cx)
+            else {
+                return;
+            };
+            self.selection = Some(found);
+            self.autoscroll(cx);
+            cx.notify();
+            cx.stop_propagation();
             return;
         }
         if key.len() != 1

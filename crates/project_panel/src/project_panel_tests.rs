@@ -12041,6 +12041,28 @@ async fn test_type_ahead_selects_visible_entries(cx: &mut gpui::TestAppContext) 
     assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
     cx.simulate_keystrokes("a");
     assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
+
+    // "a" alone matches both "infra.txt" and the "a" directory: the current
+    // selection stays (it still matches), and up/down cycle through the
+    // matches (wrapping around the visible list).
+    expire_type_ahead(&panel, cx);
+    cx.simulate_keystrokes("a");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
+    cx.simulate_keystrokes("down");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("a"));
+    cx.simulate_keystrokes("up");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
+
+    // Backspace removes the last query character (the selection stays put,
+    // since any match of the longer query also matches its prefix); emptying
+    // the query exits type-ahead mode.
+    expire_type_ahead(&panel, cx);
+    cx.simulate_keystrokes("b");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("b"));
+    panel.update(cx, |panel, _| assert!(panel.type_ahead.is_some()));
+    cx.simulate_keystrokes("backspace");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("b"));
+    panel.update(cx, |panel, _| assert!(panel.type_ahead.is_none()));
 }
 
 fn expire_type_ahead(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
