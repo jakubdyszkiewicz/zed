@@ -21,8 +21,8 @@ use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
     ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
     ExternalDragPayload, ExternalPaths, FileDragPaths, FocusHandle, Focusable, FontWeight, Hsla,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, ParentElement,
+    InteractiveElement, KeyContext, KeyDownEvent, ListHorizontalSizingBehavior, ListSizingBehavior,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, ParentElement,
     PathPromptOptions, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
     Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
     div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
@@ -166,7 +166,18 @@ pub struct ProjectPanel {
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_manager: UndoManager,
     state: State,
+    type_ahead: Option<TypeAhead>,
 }
+
+/// IntelliJ-style type-ahead in the tree: printable keystrokes accumulate into
+/// a query (reset after a short idle) and move the selection to the first
+/// visible entry whose file name contains the query.
+struct TypeAhead {
+    query: String,
+    at: Instant,
+}
+
+const TYPE_AHEAD_RESET_INTERVAL: Duration = Duration::from_secs(1);
 
 struct UpdateVisibleEntriesTask {
     _visible_entries_task: Task<()>,
@@ -970,6 +981,7 @@ impl ProjectPanel {
                 previous_drag_position: None,
                 sticky_items_count: 0,
                 last_reported_update: Instant::now(),
+                type_ahead: None,
                 state: State {
                     max_width_item_index: None,
                     edit_state: None,
@@ -6903,6 +6915,68 @@ impl ProjectPanel {
         }
     }
 
+    /// Type-ahead: intercepts printable keystrokes while the panel is focused
+    /// (and not editing) and moves the selection to the first visible entry
+    /// whose file name contains the accumulated query.
+    fn handle_type_ahead_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.focus_handle.contains_focused(window, cx)
+            || self.state.edit_state.is_some()
+            || self.filename_editor.focus_handle(cx).is_focused(window)
+        {
+            return;
+        }
+
+        let keystroke = &event.keystroke;
+        let key = keystroke.key.as_str();
+        if key.len() != 1
+            || keystroke.modifiers.control
+            || keystroke.modifiers.alt
+            || keystroke.modifiers.platform
+            || keystroke.modifiers.function
+        {
+            return;
+        }
+
+        let now = Instant::now();
+        let query = match self.type_ahead.as_ref() {
+            Some(type_ahead) if now.duration_since(type_ahead.at) < TYPE_AHEAD_RESET_INTERVAL => {
+                format!("{}{}", type_ahead.query, key)
+            }
+            _ => key.to_string(),
+        };
+        self.type_ahead = Some(TypeAhead {
+            query: query.clone(),
+            at: now,
+        });
+
+        let query = query.to_lowercase();
+        let found = self.find_visible_entry(
+            self.selection.as_ref(),
+            false,
+            &|entry, _| {
+                entry
+                    .entry
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .contains(&query)
+            },
+            cx,
+        );
+        if let Some(found) = found {
+            self.selection = Some(found);
+            self.autoscroll(cx);
+            cx.notify();
+            cx.stop_propagation();
+        }
+    }
+
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
@@ -7309,6 +7383,7 @@ impl Render for ProjectPanel {
                     },
                 ))
                 .key_context(self.dispatch_context(window, cx))
+                .on_key_down(cx.listener(Self::handle_type_ahead_key))
                 .on_action(cx.listener(Self::scroll_up))
                 .on_action(cx.listener(Self::scroll_down))
                 .on_action(cx.listener(Self::scroll_cursor_center))

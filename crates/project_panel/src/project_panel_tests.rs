@@ -11967,3 +11967,66 @@ async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) 
         );
     }
 }
+
+#[gpui::test]
+async fn test_type_ahead_selects_visible_entries(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root1"),
+        json!({
+            ".git": {},
+            "a": { "0": {}, "1": {} },
+            "b": {},
+            "C": {},
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    select_path(&panel, "root1", cx);
+    toggle_expand_dir(&panel, "root1/a", cx);
+    select_path(&panel, "root1/a", cx);
+    cx.run_until_parked();
+
+    let selected_path = |panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext| {
+        panel.update(cx, |panel, cx| {
+            panel
+                .selected_entry(cx)
+                .map(|(_, entry)| entry.path.to_string())
+        })
+    };
+    // Selection starts at the root; typing "c" jumps to the first visible
+    // entry whose file name contains "c" (case-insensitive).
+    eprintln!(
+        "DEBUG visible={:?}",
+        visible_entries_as_strings(&panel, 0..50, cx)
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        window.focus(&panel.focus_handle, cx);
+    });
+    cx.simulate_keystrokes("c");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("C"));
+
+    // The query accumulates while typing: "cc" matches nothing, so the
+    // selection stays put.
+    cx.simulate_keystrokes("c");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("C"));
+
+    // Digits accumulate too: "cc0" matches nothing, so the selection stays.
+    // (This proves the query builds up rather than resetting per keypress.)
+    cx.simulate_keystrokes("0");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("C"));
+}

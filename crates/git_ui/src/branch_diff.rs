@@ -185,8 +185,10 @@ impl BranchDiff {
                             })
                             .await??;
                         let base_text_task = match tree_diff.entries.get(&repo_path) {
-                            Some(git::status::TreeDiffStatus::Modified { old, .. }
-                            | git::status::TreeDiffStatus::Deleted { old }) => Some(
+                            Some(
+                                git::status::TreeDiffStatus::Modified { old, .. }
+                                | git::status::TreeDiffStatus::Deleted { old },
+                            ) => Some(
                                 repository
                                     .update(cx, |repo, cx| repo.load_blob_content(old.clone(), cx))
                                     .await?,
@@ -203,7 +205,11 @@ impl BranchDiff {
                                 window,
                                 cx,
                             )
-                            .detach_and_notify_err(error_handle, window, cx);
+                            .detach_and_notify_err(
+                                error_handle,
+                                window,
+                                cx,
+                            );
                         })?;
                         anyhow::Ok(())
                     })

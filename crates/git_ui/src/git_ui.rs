@@ -124,9 +124,7 @@ pub fn init(cx: &mut App) {
                                 let git_store = project.read(cx).git_store().clone();
                                 let (repository, repo_path) = git_store
                                     .read(cx)
-                                    .repository_and_path_for_project_path(
-                                        &project_path, cx,
-                                    )?;
+                                    .repository_and_path_for_project_path(&project_path, cx)?;
                                 let status =
                                     repository.read(cx).status_for_path(&repo_path)?.status;
                                 (repository, repo_path, status)
@@ -144,7 +142,11 @@ pub fn init(cx: &mut App) {
                                 window,
                                 cx,
                             )
-                            .detach_and_notify_err(workspace_handle, window, cx);
+                            .detach_and_notify_err(
+                                workspace_handle,
+                                window,
+                                cx,
+                            );
                             Some(())
                         });
                     })

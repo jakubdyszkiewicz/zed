@@ -1,0 +1,3 @@
+#!/bin/sh
+if [ "$1" = "target" ]; then echo "shim: skipping rustup $*"; exit 0; fi
+exec /opt/homebrew/bin/cargo "$1" "$@" 2>/dev/null || exit 1

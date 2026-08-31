@@ -14,7 +14,15 @@ All changes implement **per-file git diff features**:
 2. **Show Diff** — right-click a file → `git: show file diff` → opens the
    `SoloDiffView` (same as Git Panel "File Diff" click behavior) showing the
    whole file diffed against HEAD.
-3. **Git Graph branch filtering** — merged from upstream PR #57266 (branch
+3. **Project panel type-ahead** — focus the file tree and type; printable
+   keystrokes accumulate into a query (resets after 1s idle) and the selection
+   jumps to the first visible entry whose file name contains the query
+   (case-insensitive substring, IntelliJ-style, visible entries only).
+   Implementation: `ProjectPanel::handle_type_ahead_key` hooked via
+   `.on_key_down` on the `project-panel` div in `render`; matches via the
+   existing `find_visible_entry` predicate search. No new actions or keymap
+   entries needed.
+4. **Git Graph branch filtering** — merged from upstream PR #57266 (branch
    `pr-57266` / tip `2c27164c97`, "show only current branch" toggle, branch
    chips, `+` add-branch picker). Merge required small fixes: unified `ui::`
    import list, restored a closing brace after `deploy_header_context_menu`,
