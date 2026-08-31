@@ -6516,16 +6516,33 @@ impl ProjectPanel {
                                     ))
                                 }
 
-                                None => this.child(
-                                    Label::new(file_name)
-                                        .single_line()
-                                        .color(filename_text_color)
-                                        .when(
-                                            settings.bold_folder_labels && kind.is_dir(),
-                                            |this| this.weight(FontWeight::SEMIBOLD),
-                                        )
-                                        .into_any_element(),
-                                ),
+                                None => {
+                                    let query = self
+                                        .active_type_ahead()
+                                        .map(|query| query.to_lowercase())
+                                        .filter(|query| {
+                                            file_name.to_lowercase().contains(query.as_str())
+                                        });
+                                    match query {
+                                        Some(query) => {
+                                            this.child(self.render_highlighted_filename(
+                                                &file_name,
+                                                &query,
+                                                filename_text_color,
+                                            ))
+                                        }
+                                        None => this.child(
+                                            Label::new(file_name)
+                                                .single_line()
+                                                .color(filename_text_color)
+                                                .when(
+                                                    settings.bold_folder_labels && kind.is_dir(),
+                                                    |this| this.weight(FontWeight::SEMIBOLD),
+                                                )
+                                                .into_any_element(),
+                                        ),
+                                    }
+                                }
                             })
                     })
                     .on_secondary_mouse_down(cx.listener(
@@ -6918,6 +6935,55 @@ impl ProjectPanel {
     /// Type-ahead: intercepts printable keystrokes while the panel is focused
     /// (and not editing) and moves the selection to the first visible entry
     /// whose file name contains the accumulated query.
+    /// Returns the current type-ahead query, if it is still fresh.
+    fn active_type_ahead(&self) -> Option<&str> {
+        let type_ahead = self.type_ahead.as_ref()?;
+        (type_ahead.at.elapsed() < TYPE_AHEAD_RESET_INTERVAL).then_some(type_ahead.query.as_str())
+    }
+
+    /// Renders a file name with all occurrences of the (lowercased) type-ahead
+    /// query highlighted.
+    fn render_highlighted_filename(
+        &self,
+        file_name: &str,
+        query: &str,
+        filename_text_color: Color,
+    ) -> AnyElement {
+        let name_chars: Vec<char> = file_name.chars().collect();
+        let query_chars: Vec<char> = query.chars().collect();
+
+        let mut spans: Vec<(String, bool)> = Vec::new();
+        let mut plain = String::new();
+        let mut i = 0;
+        while i < name_chars.len() {
+            if !query_chars.is_empty() && name_chars[i..].starts_with(&query_chars) {
+                if !plain.is_empty() {
+                    spans.push((std::mem::take(&mut plain), false));
+                }
+                spans.push((name_chars[i..i + query_chars.len()].iter().collect(), true));
+                i += query_chars.len();
+            } else {
+                plain.push(name_chars[i]);
+                i += 1;
+            }
+        }
+        if !plain.is_empty() {
+            spans.push((plain, false));
+        }
+
+        h_flex()
+            .flex_none()
+            .children(spans.into_iter().map(|(text, matched)| {
+                let label = Label::new(text).single_line();
+                if matched {
+                    label.color(Color::Accent).weight(FontWeight::BOLD)
+                } else {
+                    label.color(filename_text_color)
+                }
+            }))
+            .into_any_element()
+    }
+
     fn handle_type_ahead_key(
         &mut self,
         event: &KeyDownEvent,
@@ -6933,6 +6999,12 @@ impl ProjectPanel {
 
         let keystroke = &event.keystroke;
         let key = keystroke.key.as_str();
+        if key == "escape" {
+            if self.type_ahead.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
         if key.len() != 1
             || keystroke.modifiers.control
             || keystroke.modifiers.alt
@@ -7870,6 +7942,36 @@ impl Render for ProjectPanel {
                     )
                     .with_priority(3)
                 }))
+                .when_some(
+                    self.active_type_ahead().map(|q| q.to_string()),
+                    |this, query| {
+                        this.child(
+                            h_flex()
+                                .absolute()
+                                .top_2()
+                                .left_2()
+                                .px_2()
+                                .py_1()
+                                .gap_1()
+                                .rounded_sm()
+                                .bg(cx.theme().colors().surface_background)
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .shadow_md()
+                                .child(
+                                    Label::new("Type-ahead")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(query)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Accent)
+                                        .weight(FontWeight::BOLD),
+                                ),
+                        )
+                    },
+                )
         } else {
             let focus_handle = self.focus_handle(cx);
             let workspace = self.workspace.clone();
