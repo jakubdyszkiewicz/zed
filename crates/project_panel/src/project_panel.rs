@@ -179,6 +179,26 @@ struct TypeAhead {
 
 const TYPE_AHEAD_RESET_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Fuzzy-matches `file_name` against the type-ahead `query`: every query
+/// character must appear in the name, in order (case-insensitive subsequence
+/// match). Returns the indices of the matched characters in `file_name`.
+fn type_ahead_match_indices(file_name: &str, query: &str) -> Option<Vec<usize>> {
+    let name_chars: Vec<char> = file_name.to_lowercase().chars().collect();
+    let query_chars: Vec<char> = query.to_lowercase().chars().collect();
+    if query_chars.is_empty() {
+        return None;
+    }
+
+    let mut indices = Vec::with_capacity(query_chars.len());
+    let mut cursor = 0;
+    for query_char in &query_chars {
+        let found = name_chars[cursor..].iter().position(|c| c == query_char)?;
+        indices.push(cursor + found);
+        cursor += found + 1;
+    }
+    Some(indices)
+}
+
 struct UpdateVisibleEntriesTask {
     _visible_entries_task: Task<()>,
     focus_filename_editor: bool,
@@ -6517,20 +6537,15 @@ impl ProjectPanel {
                                 }
 
                                 None => {
-                                    let query = self
-                                        .active_type_ahead()
-                                        .map(|query| query.to_lowercase())
-                                        .filter(|query| {
-                                            file_name.to_lowercase().contains(query.as_str())
-                                        });
-                                    match query {
-                                        Some(query) => {
-                                            this.child(self.render_highlighted_filename(
-                                                &file_name,
-                                                &query,
-                                                filename_text_color,
-                                            ))
-                                        }
+                                    let query = self.active_type_ahead().map(str::to_string);
+                                    match query.and_then(|query| {
+                                        self.render_highlighted_filename(
+                                            &file_name,
+                                            &query,
+                                            filename_text_color,
+                                        )
+                                    }) {
+                                        Some(highlighted) => this.child(highlighted),
                                         None => this.child(
                                             Label::new(file_name)
                                                 .single_line()
@@ -6941,47 +6956,36 @@ impl ProjectPanel {
         (type_ahead.at.elapsed() < TYPE_AHEAD_RESET_INTERVAL).then_some(type_ahead.query.as_str())
     }
 
-    /// Renders a file name with all occurrences of the (lowercased) type-ahead
-    /// query highlighted.
+    /// Renders a file name with the characters matched by the (lowercased)
+    /// type-ahead query highlighted. Returns `None` when the name does not
+    /// fuzzily match the query.
     fn render_highlighted_filename(
         &self,
         file_name: &str,
         query: &str,
         filename_text_color: Color,
-    ) -> AnyElement {
-        let name_chars: Vec<char> = file_name.chars().collect();
-        let query_chars: Vec<char> = query.chars().collect();
+    ) -> Option<AnyElement> {
+        let matched = type_ahead_match_indices(file_name, query)?;
+        let matched: HashSet<usize> = matched.into_iter().collect();
 
-        let mut spans: Vec<(String, bool)> = Vec::new();
-        let mut plain = String::new();
-        let mut i = 0;
-        while i < name_chars.len() {
-            if !query_chars.is_empty() && name_chars[i..].starts_with(&query_chars) {
-                if !plain.is_empty() {
-                    spans.push((std::mem::take(&mut plain), false));
-                }
-                spans.push((name_chars[i..i + query_chars.len()].iter().collect(), true));
-                i += query_chars.len();
-            } else {
-                plain.push(name_chars[i]);
-                i += 1;
-            }
-        }
-        if !plain.is_empty() {
-            spans.push((plain, false));
-        }
+        let spans = file_name
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| (ch.to_string(), matched.contains(&i)));
 
-        h_flex()
-            .flex_none()
-            .children(spans.into_iter().map(|(text, matched)| {
-                let label = Label::new(text).single_line();
-                if matched {
-                    label.color(Color::Accent).weight(FontWeight::BOLD)
-                } else {
-                    label.color(filename_text_color)
-                }
-            }))
-            .into_any_element()
+        Some(
+            h_flex()
+                .flex_none()
+                .children(spans.map(|(text, matched)| {
+                    let label = Label::new(text).single_line();
+                    if matched {
+                        label.color(Color::Accent).weight(FontWeight::BOLD)
+                    } else {
+                        label.color(filename_text_color)
+                    }
+                }))
+                .into_any_element(),
+        )
     }
 
     fn handle_type_ahead_key(
@@ -7031,13 +7035,8 @@ impl ProjectPanel {
             self.selection.as_ref(),
             false,
             &|entry, _| {
-                entry
-                    .entry
-                    .path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_lowercase()
-                    .contains(&query)
+                type_ahead_match_indices(entry.entry.path.file_name().unwrap_or_default(), &query)
+                    .is_some()
             },
             cx,
         );

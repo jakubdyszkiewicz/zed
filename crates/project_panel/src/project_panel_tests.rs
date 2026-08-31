@@ -11980,6 +11980,7 @@ async fn test_type_ahead_selects_visible_entries(cx: &mut gpui::TestAppContext) 
             "a": { "0": {}, "1": {} },
             "b": {},
             "C": {},
+            "infra.txt": "x",
         }),
     )
     .await;
@@ -12029,4 +12030,24 @@ async fn test_type_ahead_selects_visible_entries(cx: &mut gpui::TestAppContext) 
     // (This proves the query builds up rather than resetting per keypress.)
     cx.simulate_keystrokes("0");
     assert_eq!(selected_path(&panel, cx).as_deref(), Some("C"));
+
+    // After the idle reset a new query starts. "i" fuzzy-selects the next
+    // visible entry containing "i" (infra.txt), and extending to "ina" stays
+    // on it (subsequence match: i-n-a are highlighted in "infra.txt").
+    expire_type_ahead(&panel, cx);
+    cx.simulate_keystrokes("i");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
+    cx.simulate_keystrokes("n");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
+    cx.simulate_keystrokes("a");
+    assert_eq!(selected_path(&panel, cx).as_deref(), Some("infra.txt"));
+}
+
+fn expire_type_ahead(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
+    panel.update(cx, |panel, _| {
+        panel.type_ahead = Some(crate::TypeAhead {
+            query: "expired".into(),
+            at: std::time::Instant::now() - crate::TYPE_AHEAD_RESET_INTERVAL,
+        });
+    });
 }
