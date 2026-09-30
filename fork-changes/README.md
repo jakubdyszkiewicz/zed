@@ -3,9 +3,9 @@
 Custom features added on top of upstream `zed-industries/zed`. Kept here so we
 can re-apply or re-verify them when merging upstream `main`.
 
-## Current changes (as of 2026-08-30)
+## Current changes (as of 2026-09-30)
 
-All changes implement **per-file git diff features**:
+The fork retains these custom features:
 
 1. **Compare with Branch…** — right-click a file in the project panel (or run
    `git: compare file with branch` from the command palette) → branch picker →
@@ -15,13 +15,11 @@ All changes implement **per-file git diff features**:
    `SoloDiffView` (same as Git Panel "File Diff" click behavior) showing the
    whole file diffed against HEAD.
 3. **Project panel type-ahead** — focus the file tree and type; printable
-   keystrokes accumulate into a query (resets after 1s idle) and the selection
-   jumps to the first visible entry whose file name contains the query
-   (case-insensitive substring, IntelliJ-style, visible entries only).
-   Implementation: `ProjectPanel::handle_type_ahead_key` hooked via
-   `.on_key_down` on the `project-panel` div in `render`; matches via the
-   existing `find_visible_entry` predicate search. No new actions or keymap
-   entries needed.
+   keystrokes accumulate into a query (resets after 1s idle). Case-insensitive
+   fuzzy subsequence matching selects visible entries and highlights matched
+   characters, with a query pill overlay. Backspace edits the query, Up/Down
+   cycle through matches, and Escape cancels it. The `type_ahead` key context
+   activates these bindings while a query is active.
 4. **Git Graph branch filtering** — merged from upstream PR #57266 (branch
    `pr-57266` / tip `2c27164c97`, "show only current branch" toggle, branch
    chips, `+` add-branch picker). Merge required small fixes: unified `ui::`
@@ -103,7 +101,24 @@ history if needed.
    (`init()`), `crates/git_ui_core/src/git_ui_core.rs` (opener globals).
 3. After resolving, verify the gotchas above still hold (especially whether
    `open_or_focus` / `FileDiffView::open*` signatures changed).
-4. `cargo clippy -p git -p project -p project_panel -p git_ui_core -p git_ui`
+4. `./script/clippy -p git -p project -p project_panel -p git_ui_core -p git_ui`
    then `cargo test -p git_ui --lib && cargo test -p git_ui_core --lib`.
 5. Smoke test in a real repo: context menu items, `cmd-d`, palette action,
    panel-selection vs editor-cursor behavior.
+
+## Upstream sync on 2026-09-30
+
+Merged upstream `main` at `39b5329322` into `fork-features`, retaining the
+existing fork commits. Resolved conflicts by keeping both Git Graph branch
+filter state and upstream navigation history, both type-ahead and upstream
+drag tests, and the combined project panel imports. `Repository::load_blob_content`
+remains public with upstream's new shared-reference implementation and
+background object-read limiter.
+
+Validation: `./script/clippy -p git -p project -p project_panel -p git_ui_core
+-p git_ui` passed, as did the type-ahead regression test and the complete
+`git_ui` (162 tests) and `git_ui_core` (28 tests) library suites, including
+`test_diff_view_with_base_text`. Clippy required minor cleanup of the retained
+fork code: mark an unused context parameter, copy an `Oid` directly, and
+construct unit actions without `default()`. The complete `project_panel`
+library suite also passed (137 tests).

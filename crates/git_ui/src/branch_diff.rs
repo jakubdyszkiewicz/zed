@@ -9,7 +9,7 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use editor::{
-    Addon, Editor, EditorEvent, RestoreOnlyDiffHunkDelegate, SplittableEditor,
+    Addon, Editor, EditorEvent, HiddenDiffHunkRenderer, SplittableEditor,
     actions::SendReviewToAgent,
 };
 use git::{repository::DiffType, status::FileStatus};
@@ -190,7 +190,7 @@ impl BranchDiff {
                                 | git::status::TreeDiffStatus::Deleted { old },
                             ) => Some(
                                 repository
-                                    .update(cx, |repo, cx| repo.load_blob_content(old.clone(), cx))
+                                    .update(cx, |repo, cx| repo.load_blob_content(*old, cx))
                                     .await?,
                             ),
                             _ => None,
@@ -432,7 +432,7 @@ impl BranchDiff {
                 Capability::ReadWrite,
                 "No changes",
                 move |editor, cx| {
-                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+                    editor.set_diff_hunk_renderer(Some(Arc::new(HiddenDiffHunkRenderer)), cx);
                     editor.rhs_editor().update(cx, move |rhs_editor, _cx| {
                         rhs_editor.set_read_only(false);
                         rhs_editor.register_addon(BranchDiffAddon {
